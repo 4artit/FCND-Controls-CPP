@@ -6,6 +6,7 @@ For easy navigation throughout this document, here is an outline:
 
  - [Development environment setup](#development-environment-setup)
  - [Simulator walkthrough](#simulator-walkthrough)
+
  - [The tasks](#the-tasks)
  - [Evaluation](#evaluation)
 
@@ -297,3 +298,123 @@ The specific performance metrics are as follows:
 ## Authors ##
 
 Thanks to Fotokite for the initial development of the project code and simulator.
+
+
+---
+# REPORT #
+
+### Scenario 1 - Intro ###
+
+For solving scenario 1, I changed `Mass` value as 0.5 in  `QuadControlParams.txt`
+
+ ```
+QuadControlParams.Mass * 9.81 / 4
+ ```
+
+ ### Scenario 2 - Body rate and roll/pitch control ###
+
+ ##### 1. implement the code in the function GenerateMotorCommands()
+ f1, f2, f3, f4 are individual motors thrust, located front left, front right, rear left and rear right.
+ `collThrustCmd` is f1 + f2 + f3 + f4.
+ 
+ Roll is produced by 1st and 3rd propellers - 2nd and 4th propellers. `F_x`(tau_x) = (f1 + f3 - f2 - f4 ) / l
+ 
+ Pitch is produced by 1st and 2nd propellers - 3rd and 4th propellers. `F_y`(tau_y) = (f1 + f2 - f3- f4) / l
+ 
+ Yaw is produced by clockwise counterclockwise propeller difference. `F_z`(tau_z) = (f1 - f2 + f4 - f3) * k 
+ 
+ There are 4 equations and 4 parameters(f1, f2, f3, f4) so can get value about each parameter.
+ 
+
+ ##### 2. implement the code in the function BodyRateControl()
+
+ Body rate controller is made as P controller. Using inertia for each body rate 3 axis(p, q, r).
+ ```
+  V3F momentCmd;
+  V3F Inertia;
+  Inertia.x = Ixx;
+  Inertia.y = Iyy;
+  Inertia.z = Izz;
+
+  momentCmd = Inertia * kpPQR * (pqrCmd - pqr); 
+  
+ ```
+ ##### 3. Implement roll / pitch control
+ Implement this method using below equation. This controller is also P controller.
+ ![equation1](image/eq1.png)
+ ```
+  float c = -collThrustCmd / mass;
+  float x_error = accelCmd.x / c - R(0, 2);
+  float y_error = accelCmd.y / c - R(1, 2);
+
+  float b_x_c_dot = kpBank * x_error;
+  float b_y_c_dot = kpBank * y_error;
+
+  pqrCmd.x = (R(1, 0) * b_x_c_dot - R(0, 0) * b_y_c_dot) / R(2, 2);
+  pqrCmd.y = (R(1, 1) * b_x_c_dot - R(0, 1) * b_y_c_dot) / R(2, 2);
+  pqrCmd.z = 0;
+ ```
+ ##### 4. Tune kpPQR in QuadControlParams.txt to get the vehicle to stop spinning quickly but not overshoot
+ ##### 5. Tune kpBank in QuadControlParams.txt to minimize settling time but avoid too much overshoot
+ Tuned all kpPQR and kpBank. Below image is the result.
+ ![result1](image/image1.png)
+
+ ### Scanario 3 - Position/velocity and yaw angle control ###
+
+ ##### 1. Implement the code in the function LateralPositionControl()
+ This controller is P controller and implemented using below equation.
+ ![equation2](image/eq2.png)
+ ```
+  V3F accelCmd = accelCmdFF;
+
+  velCmd.x = CONSTRAIN(velCmd.x, -maxSpeedXY, maxSpeedXY);
+  velCmd.y = CONSTRAIN(velCmd.y, -maxSpeedXY, maxSpeedXY);
+
+  V3F xy_dot_dot_comand = kpPosXY * (posCmd - pos) + kpVelXY * (velCmd - vel) + accelCmd;
+
+  accelCmd.x = CONSTRAIN(xy_dot_dot_comand.x, -maxAccelXY, maxAccelXY);
+  accelCmd.y = CONSTRAIN(xy_dot_dot_comand.y, -maxAccelXY, maxAccelXY);
+  accelCmd.z = 0;
+ ```
+
+ ##### 2. Implement the code in the function AltitudeControl()
+ Altitude Controller is PI controller.
+ ![equation3](image/eq3.png)
+
+ ```
+  Mat3x3F R = attitude.RotationMatrix_IwrtB();
+  float thrust = 0;
+
+  float z_err = posZCmd - posZ;
+  float vel_err = velZCmd - velZ;
+  integratedAltitudeError = integratedAltitudeError + z_err * dt;
+  float u1_bar = kpPosZ * z_err + kpVelZ * vel_err + KiPosZ * integratedAltitudeError + accelZCmd;
+  float c = (u1_bar - CONST_GRAVITY) / R(2, 2);
+  float c_constrain = CONSTRAIN(c, -maxAscentRate / dt, maxAscentRate / dt);
+  thrust = -c_constrain * mass;
+ ```
+
+ ##### 3. Implement the code in the function YawControl()
+ Implement P controller using below equation.
+  ![equation4](image/eq4.png)
+ ```
+  float restr_yawCmd = fmodf(yawCmd, 2.f * F_PI);
+  float yaw_err = restr_yawCmd - yaw;
+  if (yaw_err > F_PI) {
+      yaw_err = yaw_err - 2.f * F_PI;
+  }
+  else if (yaw_err < - F_PI) {
+      yaw_err = yaw_err + 2.f * F_PI;
+  }
+  yawRateCmd = kpYaw * yaw_err;
+ ```
+
+
+ ### Scanario 4 - Non-idealities and robustness ###
+ 3 quadroters represent:
+ * The green quad has its center of mass shifted back
+ * The orange vehicle is an ideal quad
+ * The red vehicle is heavier than usual
+
+ Tune all of parameters well then all quadrotors move properly.
+  ![result2](image/image2.png)
